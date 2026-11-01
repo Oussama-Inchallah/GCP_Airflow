@@ -70,7 +70,8 @@ instance/
 .scrapy
 
 # Sphinx documentation
-docs/_build/
+docs/
+_build/
 
 # PyBuilder
 .pybuilder/
@@ -142,6 +143,7 @@ celerybeat.pid
 mnesia/
 rabbitmq/
 rabbitmq-data/
+data/
 
 # ActiveMQ
 activemq-data/

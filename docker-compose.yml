@@ -1,0 +1,20 @@
+name: gcp_airflow
+services:
+  airflow:
+    image: apache/airflow:2.9.3
+    container_name: gcp-airflow
+    command: standalone
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"                # hide Airflow demo DAGs
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"   # our DAGs start manually
+      VERIFY_SSL: "true"       # set to "false" if your network blocks HTTPS (see README)
+    # depends_on:
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+    ports:
+      - "8080:8080"        # http://localhost:8080
+
+volumes:
+  airflow_logs:
