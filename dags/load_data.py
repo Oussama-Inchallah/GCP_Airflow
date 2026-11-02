@@ -1,16 +1,31 @@
+from datetime import datetime
+import os
+import requests
+import pandas as pd
+from dotenv import load_dotenv
+import logging
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.providers.google.cloud.hooks.gcs import GCSHook
 from airflow.providers.google.cloud.transfers.gcs_to_bigquery import (
     GCSToBigQueryOperator,
 )
-from datetime import datetime
-import requests
-import pandas as pd
 
-def  extract_and_load(**context):
+logging.basicConfig(level=logging.INFO)
+load_dotenv()
 
+PROJECT_ID = os.getenv("PROJECT_ID")
+if not PROJECT_ID:
+    raise ValueError("PROJECT_ID doit être défini dans l'environnement Airflow")
+
+BUCKET_NAME = os.getenv("GCS_BUCKET")
+if not BUCKET_NAME:
+    raise ValueError("GCS_BUCKET doit être défini dans l'environnement Airflow")
+
+GCS_OBJECT = "worldbank/{{ ds }}/indicators.csv"
+
+def extract_and_upload(**context):
     frames = []
-
     for country in ["MAR", "TUN", "DZA", "EGY", "FRA"]:
         for indicators in ["NY.GDP.MKTP.CD","FP.CPI.TOTL.ZG","SP.POP.TOTL","SL.UEM.TOTL.ZS","SP.DYN.LE00.IN"] : 
             url = f"https://api.worldbank.org/v2/country/{country}/indicator/{indicators}"
@@ -51,53 +66,57 @@ def  extract_and_load(**context):
                         "value",
                     ]
                     df["year"] = df["year"].astype("int64")
-                    df["load_date"] = context["ds"]
+                    df["load_date"] = context["ds"]  # temps d'éxecution du DAG
                     frames.append(df)
 
     result = pd.concat(frames, ignore_index=True)
+    logging.info(f"Nombre de lignes extraites : {len(result)}")
 
     local_path = "./data/indicators.csv"
     result.to_csv(local_path, index=False)
+    logging.info(f"Fichier CSV sauvegardé localement à : {local_path}")
 
-    return local_path
-
+    gcs_object = f"worldbank/{context['ds']}/indicators.csv"
+    
+    GCSHook(gcp_conn_id="google_cloud_default").upload(
+        bucket_name=BUCKET_NAME,
+        object_name=gcs_object,
+        filename=local_path)
+    logging.info(f"Fichier CSV téléchargé sur GCS : {gcs_object}")
+        
 with DAG(
-    "worldbank_gdp_ingestion", 
-    schedule_interval="@daily", 
-    start_date=datetime(2026, 11, 1)
-    ) as dag:
-    
+    "worldbank_gdp_ingestion",
+    schedule="@daily",
+    start_date=datetime(2026, 11, 2),
+    catchup=False,
+) as dag:
+
     extract_and_upload = PythonOperator(
-        task_id="extract_and_load_locally",
-        python_callable=extract_and_load,
+        task_id="extract_and_upload_gcs",
+        python_callable=extract_and_upload,
     )
-    
-    
-    
 
-    # Upload the CSV file to Google Cloud Storage
-    # client = storage.Client()
-    # bucket_name = "<project>-worldbank-raw"
-    # bucket = client.bucket(bucket_name)
-    
-    # Assuming the extracted CSV file is named 'API_NY.GDP.MKTP.CD_DS2_en_csv_v2_535045.csv'
-    # csv_file_path = "/tmp/API_NY.GDP.MKTP.CD_DS2_en_csv_v2_535045.csv"
-    
-    # Create a folder in GCS based on the execution date
-    # execution_date = datetime.now().strftime("%Y-%m-%d")
-    # blob = bucket.blob(f"worldbank/{execution_date}/indicators.csv")
-    
-    # blob.upload_from_filename(csv_file_path)
+    load_to_bigquery = GCSToBigQueryOperator(
+        task_id="load_to_bigquery",
+        bucket=BUCKET_NAME,
+        source_objects=[GCS_OBJECT],
+        destination_project_dataset_table=(
+            f"{PROJECT_ID}.raw_worldbank.indicators"
+        ),
+        schema_fields=[
+            {"name": "country_code", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "country_name", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "indicator_code", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "indicator_label", "type": "STRING", "mode": "NULLABLE"},
+            {"name": "year", "type": "INT64", "mode": "NULLABLE"},
+            {"name": "value", "type": "FLOAT64", "mode": "NULLABLE"},
+            {"name": "load_date", "type": "DATE", "mode": "NULLABLE"},
+        ],
+        source_format="CSV",
+        skip_leading_rows=1,
+        write_disposition="WRITE_APPEND",
+        time_partitioning={"type": "DAY", "field": "load_date"},
+        cluster_fields=["country_code"],
+    )
 
-
-#     load_to_bigquery = GCSToBigQueryOperator(
-#         task_id="load_to_bigquery",
-#         bucket="<project>-worldbank-raw",
-#         source_objects=["worldbank/{{ ds }}/indicators.csv"],
-#         destination_project_dataset_table="raw_worldbank.indicators",
-#         write_disposition="WRITE_TRUNCATE",
-#         source_format="CSV",
-#         skip_leading_rows=1,
-#     )
-    
-#     extract_and_upload >> load_to_bigquery
+    extract_and_upload >> load_to_bigquery

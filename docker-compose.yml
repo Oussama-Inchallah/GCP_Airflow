@@ -4,17 +4,22 @@ services:
     image: apache/airflow:2.9.3
     container_name: gcp-airflow
     command: standalone
+    env_file:
+      - .env
     environment:
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"                # hide Airflow demo DAGs
-      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"   # our DAGs start manually
-      VERIFY_SSL: "true"       # set to "false" if your network blocks HTTPS (see README)
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false" # hide Airflow demo DAGs
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true" # our DAGs start manually
+      VERIFY_SSL: "true" # set to "false" if your network blocks HTTPS (see README)
+      GOOGLE_APPLICATION_CREDENTIALS: /home/airflow/.config/gcloud/application_default_credentials.json
+      GOOGLE_CLOUD_PROJECT: ${PROJECT_ID}
     # depends_on:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./data:/opt/airflow/data
       - ./logs:/opt/airflow/logs
+      - ${APPDATA}/gcloud:/home/airflow/.config/gcloud:ro
     ports:
-      - "8080:8080"        # http://localhost:8080
+      - "8080:8080" # http://localhost:8080
 
 volumes:
   airflow_logs:
